@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "${var.region}"
+  region     = "${var.region}"
   access_key = "${var.access_key}"
   secret_key = "${var.secret_key}"
 }
@@ -10,48 +10,12 @@ module "cluster" {
   aws_name = "wordpress"
 }
 
-module "alb" {
-  source               = "modules/alb"
-  name                 = "wordpress"
-  aws_name             = "wordpress"
-  certificate_arn      = "${var.certificate_arn}"
-  public_second_subnet = "${module.cluster.public_second_subnet_id}"
-  public_subnet        = "${module.cluster.public_subnet_id}"
-  vpc                  = "${module.cluster.vpc_id}"
-  security_group       = "${aws_security_group.security_group.id}"
-  front_end_container  = "${aws_ecs_task_definition.wordpress_task_definition.id}"
-}
-
 module "logs" {
   source = "modules/logs"
 }
 
-resource "aws_db_subnet_group" "db_subnet_group" {
-  name       = "wordpress"
-  subnet_ids = ["${module.cluster.public_second_subnet_id}","${module.cluster.public_subnet_id}"]
-
-  tags {
-    Name = "Wordpress DB Subnet Group"
-  }
-}
-
-resource "aws_db_instance" "database" {
-  allocated_storage      = 10
-  identifier             = "wordpress"
-  db_subnet_group_name   = "${aws_db_subnet_group.db_subnet_group.id}"
-  multi_az               = "false"
-  engine                 = "mysql"
-  engine_version         = "5.7"
-  instance_class         = "db.t2.micro"
-  name                   = "wordpress"
-  username               = "wordpress"
-  password               = "jkMCjKMgKe7X4236jYqFfyarJKkzWCgi3v2ofWKrU"
-  parameter_group_name   = "default.mysql5.7"
-  vpc_security_group_ids = ["${aws_security_group.security_group.id}"]
-}
-
-resource "aws_iam_role" "ecs_instance_role" {
-  name = "ecs_instance_role"
+resource "aws_iam_role" "my_ecs_instance_role" {
+  name = "my_ecs_instance_role"
 
   assume_role_policy = <<EOF
 {
@@ -70,46 +34,31 @@ EOF
 }
 
 resource "aws_iam_instance_profile" "ecs" {
-  name = "ecs_instance_profile"
+  name = "my_ecs_instance_profile"
   path = "/"
-  role = "${aws_iam_role.ecs_instance_role.name}"
+  role = "${aws_iam_role.my_ecs_instance_role.name}"
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_ec2_role" {
-  role       = "${aws_iam_role.ecs_instance_role.id}"
+  role       = "${aws_iam_role.my_ecs_instance_role.id}"
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
 }
 
-
-resource "aws_launch_configuration" "wordpress_launch_configuration" {
-  name          = "wordpress"
-  image_id      = "${module.cluster.ecs_ami}"
-  instance_type = "t2.micro"
+resource "aws_instance" "instance" {
+  ami                    = "${module.cluster.ecs_ami}"
+  availability_zone      = "${var.region}a"
+  instance_type          = "t2.micro"
+  iam_instance_profile   = "${aws_iam_instance_profile.ecs.name}"
+  vpc_security_group_ids = ["${aws_security_group.security_group.id}"]
+  subnet_id              = "${module.cluster.public_subnet_id}"
 
   user_data = <<EOF
 #!/bin/bash -xe
 echo ECS_CLUSTER=${module.cluster.cluster_name} >> /etc/ecs/ecs.config
 EOF
 
-  iam_instance_profile = "${aws_iam_instance_profile.ecs.arn}"
-  ebs_optimized        = false
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_autoscaling_group" "wordpress_autoscaling_group" {
-  name                 = "wordpress"
-  launch_configuration = "${aws_launch_configuration.wordpress_launch_configuration.name}"
-  min_size             = 1
-  max_size             = 1
-  vpc_zone_identifier  = ["${module.cluster.private_subnet_id}"]
-
   tags {
-    key                 = "Name"
-    value               = "wordpress"
-    propagate_at_launch = true
+    Name = "Invictrix Instance"
   }
 
   lifecycle {
@@ -158,12 +107,22 @@ resource "aws_security_group" "security_group" {
 module "wordpress_container_definition" {
   source          = "./modules/container_definitions/wordpress"
   container_image = "wordpress"
-  db_host     = "${aws_db_instance.database.endpoint}"
-  db_name     = "wordpress"
-  db_user     = "wordpress"
-  db_password = "jkMCjKMgKe7X4236jYqFfyarJKkzWCgi3v2ofWKrU"
-  aws_region  = "${var.region}"
-  log_group   = "${module.logs.wordpress_logs_name}"
+  db_host         = "mysql.wordpress.local"
+  db_name         = "wordpress"
+  db_user         = "wordpress"
+  db_password     = "${data.terraform_remote_state.state.mysql_password}"
+  aws_region      = "${var.region}"
+  log_group       = "${module.logs.wordpress_logs_name}"
+}
+
+module "mysql_container_definition" {
+  source          = "./modules/container_definitions/mysql"
+  container_image = "mysql:5.7"
+  mysql_database  = "wordpress"
+  mysql_user      = "wordpress"
+  mysql_password  = "${data.terraform_remote_state.state.mysql_password}"
+  aws_region      = "${var.region}"
+  log_group       = "${module.logs.mysql_logs_name}"
 }
 
 resource "aws_iam_role" "ecsTaskExecutionRole" {
@@ -195,24 +154,44 @@ resource "aws_ecs_task_definition" "wordpress_task_definition" {
   execution_role_arn = "${aws_iam_role.ecsTaskExecutionRole.arn}"
 }
 
+resource "aws_ecs_task_definition" "mysql_task_definition" {
+  family                = "mysql"
+  container_definitions = "${module.mysql_container_definition.json}"
+  network_mode          = "awsvpc"
+
+  task_role_arn      = "${aws_iam_role.app_role.arn}"
+  execution_role_arn = "${aws_iam_role.ecsTaskExecutionRole.arn}"
+}
+
 resource "aws_ecs_service" "wordpress" {
   name            = "wordpress"
   cluster         = "${module.cluster.cluster_id}"
   task_definition = "${aws_ecs_task_definition.wordpress_task_definition.arn}"
   desired_count   = 1
-
-  load_balancer {
-    target_group_arn = "${module.alb.lb_target_group}"
-    container_name   = "wordpress"
-    container_port   = 80
-  }
 }
 
+resource "aws_ecs_service" "mysql" {
+  name            = "mysql"
+  cluster         = "${module.cluster.cluster_id}"
+  task_definition = "${aws_ecs_task_definition.mysql_task_definition.arn}"
+  desired_count   = 1
+
+  service_registries {
+    registry_arn   = "${aws_service_discovery_service.wordpress_service_discovery_service.arn}"
+    container_name = "mysql"
+  }
+
+  network_configuration {
+    security_groups = ["${aws_security_group.security_group.id}"]
+    subnets         = ["${module.cluster.public_subnet_id}"]
+  }
+}
 
 resource "aws_iam_role" "app_role" {
   name               = "wordpress-app-role"
   assume_role_policy = "${data.aws_iam_policy_document.app_role_assume_role_policy.json}"
 }
+
 resource "aws_iam_role_policy" "app_policy" {
   name   = "wordpress-app-policy"
   role   = "${aws_iam_role.app_role.id}"
@@ -231,7 +210,6 @@ data "aws_iam_policy_document" "app_policy" {
   }
 }
 
-
 data "aws_iam_policy_document" "app_role_assume_role_policy" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -240,5 +218,35 @@ data "aws_iam_policy_document" "app_role_assume_role_policy" {
       type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
     }
+  }
+}
+
+resource "aws_eip_association" "eip_assoc" {
+  instance_id   = "${aws_instance.instance.id}"
+  allocation_id = "${module.cluster.eip_id}"
+}
+
+resource "aws_service_discovery_private_dns_namespace" "wordpress_dns" {
+  name        = "wordpress.local"
+  description = "wordpress dns"
+  vpc         = "${module.cluster.vpc_id}"
+}
+
+resource "aws_service_discovery_service" "wordpress_service_discovery_service" {
+  name = "mysql"
+
+  dns_config {
+    namespace_id = "${aws_service_discovery_private_dns_namespace.wordpress_dns.id}"
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
   }
 }

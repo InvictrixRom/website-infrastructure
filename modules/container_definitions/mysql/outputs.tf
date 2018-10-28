@@ -1,5 +1,5 @@
 output "name" {
-  value = "wordpress"
+  value = "mysql"
 }
 
 output "json" {
