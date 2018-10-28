@@ -70,7 +70,7 @@ EOF
 }
 
 resource "aws_iam_instance_profile" "ecs" {
-  name = "ecs_instance_profile"
+  name = "my_ecs_instance_profile"
   path = "/"
   role = "${aws_iam_role.ecs_instance_role.name}"
 }
@@ -85,6 +85,7 @@ resource "aws_launch_configuration" "wordpress_launch_configuration" {
   name          = "wordpress"
   image_id      = "${module.cluster.ecs_ami}"
   instance_type = "t2.micro"
+  security_groups = ["${aws_security_group.security_group.id}"]
 
   user_data = <<EOF
 #!/bin/bash -xe
@@ -104,7 +105,7 @@ resource "aws_autoscaling_group" "wordpress_autoscaling_group" {
   launch_configuration = "${aws_launch_configuration.wordpress_launch_configuration.name}"
   min_size             = 1
   max_size             = 1
-  vpc_zone_identifier  = ["${module.cluster.private_subnet_id}"]
+  vpc_zone_identifier  = ["${module.cluster.public_subnet_id}"]
 
   tags {
     key                 = "Name"
