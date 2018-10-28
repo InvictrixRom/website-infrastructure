@@ -81,12 +81,11 @@ variable "log_options" {
   description = "The configuration options to send to the log_driver."
 
   default = {
-    "awslogs-region"        = "us-west-1"
-    "awslogs-group"         = "default"
+    "awslogs-region" = "us-west-1"
+    "awslogs-group" = "default"
     "awslogs-stream-prefix" = "default"
   }
 }
-
 variable "depends_on" {
   default = []
 }

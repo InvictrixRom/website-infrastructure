@@ -2,8 +2,8 @@ module "task_definition_creator" {
   source                       = "../../cloudposse-aws-ecs-container-definition"
   container_name               = "wordpress"
   container_image              = "${var.container_image}"
-  container_memory             = 450
-  container_memory_reservation = 128
+  container_memory             = 768
+  container_memory_reservation = 512
 
   environment = [
     {
@@ -21,15 +21,14 @@ module "task_definition_creator" {
     {
       name  = "WORDPRESS_DB_NAME"
       value = "${var.db_name}"
-    },
+    }
   ]
 
   log_driver = "awslogs"
-
   log_options = {
-    awslogs-region        = "${var.aws_region}"
-    awslogs-group         = "${var.log_group}"
-    awslogs-stream-prefix = "wordpress"
+      awslogs-region = "${var.aws_region}"
+      awslogs-group = "${var.log_group}"
+      awslogs-stream-prefix = "wordpress"
   }
 
   port_mappings = [
@@ -37,6 +36,6 @@ module "task_definition_creator" {
       containerPort = 80
       hostPort      = 80
       protocol      = "tcp"
-    },
+    }
   ]
 }
