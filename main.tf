@@ -45,7 +45,7 @@ resource "aws_db_instance" "database" {
   instance_class         = "db.t2.micro"
   name                   = "wordpress"
   username               = "wordpress"
-  password               = "jkMCjKMgKe7X4236jYqFfyarJKkzWCgi3v2ofWKrU"
+  password               = "${data.terraform_remote_state.state.mysql_password}"
   parameter_group_name   = "default.mysql5.7"
   vpc_security_group_ids = ["${aws_security_group.security_group.id}"]
 }
@@ -162,7 +162,7 @@ module "wordpress_container_definition" {
   db_host     = "${aws_db_instance.database.endpoint}"
   db_name     = "wordpress"
   db_user     = "wordpress"
-  db_password = "jkMCjKMgKe7X4236jYqFfyarJKkzWCgi3v2ofWKrU"
+  db_password = "${data.terraform_remote_state.state.mysql_password}"
   aws_region  = "${var.region}"
   log_group   = "${module.logs.wordpress_logs_name}"
 }
